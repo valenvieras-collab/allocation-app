@@ -1,0 +1,11 @@
+{
+  "name": "allocation",
+  "productName": "Allocation",
+  "version": "1.0.0",
+  "description": "Asset allocation de la cartera: diagnóstico, riesgo con datos históricos y rebalanceo",
+  "main": "main.js",
+  "author": "vale",
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {}
+}
