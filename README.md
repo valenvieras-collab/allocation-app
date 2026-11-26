@@ -1,4 +1,4 @@
-# Allocation para Mac
+# Albatros Allocation para Mac
 
 App de escritorio de asset allocation: diagnóstico de la cartera, riesgo y correlación con históricos de Yahoo Finance, y rebalanceo.
 
