@@ -132,7 +132,7 @@ ipcMain.handle("file:import", async () => {
 async function createWindow() {
   const dir = await pickRenderer();
   const win = new BrowserWindow({
-    width: 1320, height: 900, minWidth: 900, minHeight: 640, title: "Allocation",
+    width: 1320, height: 900, minWidth: 900, minHeight: 640, title: "Albatros Allocation",
     backgroundColor: "#0F1724", show: false,
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
@@ -141,7 +141,9 @@ async function createWindow() {
   win.loadFile(path.join(dir, "index.html"));
 }
 
-app.setName("Allocation");
+// La cartera vive en ~/Library/Application Support/Allocation: se mantiene aunque cambie el nombre visible.
+app.setPath("userData", path.join(app.getPath("appData"), "Allocation"));
+app.setName("Albatros Allocation");
 app.whenReady().then(() => {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { role: "appMenu" }, { role: "editMenu" },
