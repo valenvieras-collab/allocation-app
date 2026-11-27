@@ -85,6 +85,11 @@ tbody tr:hover{background:color-mix(in srgb,var(--accent) 5%,transparent)}
 .tk{font-family:var(--f-mono);font-weight:600}
 .tk.bondname{font-family:var(--f-sans)}
 h1.brand{display:flex;align-items:center;gap:12px}
+.pfbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.pfbar .lab{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-right:2px}
+.pfbar select.inp{width:auto;min-width:200px;font-weight:600}
+.pfbar .inp.nm{width:220px}
+.pfbar .info{color:var(--muted);font-size:13px;margin-left:auto}
 h1.brand img{height:32px;width:auto}
 svg .ax{fill:var(--faint);font-size:11px;font-family:var(--f-mono)}
 svg .lab{font-size:11.5px;font-family:var(--f-sans);font-weight:500}
@@ -178,12 +183,13 @@ details summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px
     <div class="actions" id="topActions">
       <button class="btn" id="btnAsk" hidden>Pedir lectura a Claude</button>
       <button class="btn" id="btnImport" title="Importar una copia de la cartera">Importar</button>
-      <button class="btn" id="btnExport" title="Guardar una copia de la cartera">Exportar</button>
+      <button class="btn" id="btnExport" title="Guardar una copia de todas las carteras">Exportar</button>
       <button class="btn" id="btnRefresh">Actualizar precios</button>
       <button class="btn primary" id="btnAdd" hidden>Agregar activo</button>
     </div>
   </div>
 
+  <div class="pfbar" id="pfBar" hidden></div>
   <div class="status" id="status">Abriendo la cartera…</div>
   <div class="status warn" id="exampleBanner" hidden>
     <b>Cartera de ejemplo.</b> Estos montos y estimaciones son ilustrativos, no son tus posiciones. Agregá tus activos y borrá el ejemplo cuando quieras.
@@ -1316,24 +1322,80 @@ const localDb={
   doc:()=>({ onSnapshot:(n)=>{LIS.c.push(n);setTimeout(()=>n(snapC()),0);return()=>{};},
     set:async(d)=>{STORE.config=JSON.parse(JSON.stringify(d));persist();emitC();} })
 };
+/* ---------- varias carteras ----------
+   La cartera activa vive en STORE.holdings / STORE.config (el resto de la app no cambia).
+   Las demás se guardan en STORE.pf.data[id] = {holdings, config, backup}. */
+const pfId=()=>"p"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+function pfInit(){
+  if(!STORE.pf||!Array.isArray(STORE.pf.list)||!STORE.pf.list.length){const id=pfId();STORE.pf={list:[{id,name:"Mi cartera"}],current:id,data:{}};}
+  if(!STORE.pf.list.some(x=>x.id===STORE.pf.current))STORE.pf.current=STORE.pf.list[0].id;
+  STORE.pf.data=STORE.pf.data||{};
+}
+const pfCur=()=>STORE.pf.list.find(x=>x.id===STORE.pf.current);
+function pfStash(){STORE.pf.data[STORE.pf.current]={holdings:STORE.holdings,config:STORE.config,backup:STORE.backup||null};}
+function pfLoad(id){const d=STORE.pf.data[id]||{};STORE.pf.current=id;STORE.holdings=d.holdings||{};STORE.config=d.config||null;if(d.backup)STORE.backup=d.backup;else delete STORE.backup;delete STORE.pf.data[id];}
+function pfSwitch(id,msg){
+  if(id===STORE.pf.current){renderPf();return;}
+  pfStash();pfLoad(id);persist();emitC();emitH();renderPf();
+  toast(msg||("Cartera: "+pfCur().name));
+  setTimeout(()=>{holdings.filter(h=>h.classifyPending).forEach(h=>classify(h,h.manualFields||[]));refreshAll(true);},60);
+}
+function pfCount(id){const h=id===STORE.pf.current?STORE.holdings:((STORE.pf.data[id]||{}).holdings||{});return Object.keys(h).length;}
+function renderPf(mode){
+  const bar=$("pfBar");if(!STORE.pf){bar.hidden=true;return;}bar.hidden=false;bar.innerHTML="";
+  bar.append(el("span",{class:"lab"},"Cartera"));
+  const cur=pfCur();
+  if(mode==="new"||mode==="rename"){
+    const i=el("input",{class:"inp nm",id:"pf-name",placeholder:"Nombre de la cartera",value:mode==="rename"?cur.name:""});
+    const ok=el("button",{class:"btn small primary"},mode==="new"?"Crear":"Guardar nombre");
+    const cn=el("button",{class:"btn small"},"Cancelar");cn.onclick=()=>renderPf();
+    let copy=null;
+    if(mode==="new"){copy=el("select",{class:"inp",id:"pf-from",style:"width:auto"});copy.append(el("option",{value:"empty"},"Vacía"),el("option",{value:"copy"},"Copia de "+cur.name));}
+    ok.onclick=()=>{const n=i.value.trim();if(!n){i.focus();return;}
+      if(STORE.pf.list.some(x=>x.name.toLowerCase()===n.toLowerCase()&&(mode==="new"||x.id!==cur.id))){toast("Ya hay una cartera con ese nombre");i.focus();return;}
+      if(mode==="rename"){cur.name=n;persist();renderPf();render();toast("Cartera renombrada");return;}
+      const id=pfId();STORE.pf.list.push({id,name:n});
+      const conf=STORE.config?JSON.parse(JSON.stringify(STORE.config)):null;if(conf&&copy.value==="empty"){delete conf.profile;delete conf.aae;delete conf.aaeFrom;delete conf.lastRebal;}
+      STORE.pf.data[id]={holdings:copy.value==="copy"?JSON.parse(JSON.stringify(STORE.holdings)):{},config:conf,backup:null};
+      pfSwitch(id,"Cartera «"+n+"» creada");};
+    i.addEventListener("keydown",e=>{if(e.key==="Enter")ok.click();if(e.key==="Escape")cn.click();});
+    bar.append(i);if(copy)bar.append(copy);bar.append(ok,cn);setTimeout(()=>i.focus(),0);return;
+  }
+  if(mode==="delete"){
+    bar.append(el("span",{},"¿Borrar la cartera «"+cur.name+"» con sus "+pfCount(cur.id)+" posiciones? No se puede deshacer."));
+    const y=el("button",{class:"btn small danger"},"Sí, borrar");const n=el("button",{class:"btn small"},"Cancelar");n.onclick=()=>renderPf();
+    y.onclick=()=>{const gone=cur.id;const next=STORE.pf.list.find(x=>x.id!==gone);STORE.pf.list=STORE.pf.list.filter(x=>x.id!==gone);pfLoad(next.id);persist();emitC();emitH();renderPf();toast("Cartera borrada");setTimeout(()=>refreshAll(true),60);};
+    bar.append(y,n);return;
+  }
+  const s=el("select",{class:"inp",id:"pf-select","aria-label":"Elegir cartera"});
+  STORE.pf.list.forEach(x=>{const o=el("option",{value:x.id},x.name+" ("+pfCount(x.id)+")");if(x.id===cur.id)o.selected=true;s.append(o);});
+  s.onchange=()=>pfSwitch(s.value);
+  const bN=el("button",{class:"btn small"},"Nueva cartera");bN.onclick=()=>renderPf("new");
+  const bR=el("button",{class:"btn small"},"Renombrar");bR.onclick=()=>renderPf("rename");
+  bar.append(s,bN,bR);
+  if(STORE.pf.list.length>1){const bD=el("button",{class:"btn small danger"},"Borrar");bD.onclick=()=>renderPf("delete");bar.append(bD);}
+  bar.append(el("span",{class:"info"},STORE.pf.list.length+(STORE.pf.list.length===1?" cartera guardada":" carteras guardadas")+" en esta Mac"));
+}
 $("btnRefresh").onclick=()=>refreshAll(false);
 $("btnExport").onclick=async()=>{ try{ if(await window.api.exportData(STORE)) toast("Copia guardada"); }catch(e){ toast("No se pudo exportar"); } };
 $("btnImport").onclick=async()=>{
   try{ const d=await window.api.importData(); if(!d)return;
     if(!d.holdings||typeof d.holdings!=="object"){ toast("El archivo no es una copia de Allocation"); return; }
-    STORE={holdings:d.holdings,config:d.config||STORE.config}; persist(); emitH(); emitC(); toast("Cartera importada"); refreshAll(true);
+    if(d.pf&&Array.isArray(d.pf.list)){ STORE={holdings:d.holdings,config:d.config||null,pf:d.pf,...(d.backup?{backup:d.backup}:{})}; pfInit(); persist(); emitH(); emitC(); renderPf(); toast("Se importaron "+STORE.pf.list.length+" carteras"); refreshAll(true); return; }
+    STORE.holdings=d.holdings; STORE.config=d.config||STORE.config; persist(); emitH(); emitC(); renderPf(); toast("Importada en «"+pfCur().name+"»"); refreshAll(true);
   }catch(e){ toast("No se pudo importar el archivo"); }
 };
 (async()=>{
   if(!window.api){ setStatus("Esta versión funciona dentro de la app de escritorio.","warn"); loaded=true; render(); return; }
   try{ STORE=await window.api.load(); }catch(e){ STORE={holdings:{},config:null}; }
   STORE.holdings=STORE.holdings||{};
+  pfInit(); renderPf();
   db=localDb; canWrite=true;
   db.collection("holdings").onSnapshot(snap=>{
     holdings=snap.docs.map(x=>{const v=x.data()||{};return {...v,id:x.id,target:(v.target===null||v.target===undefined||v.target==="")?NaN:Number(v.target)};});
-    loaded=true; setStatus(null); render();
+    loaded=true; setStatus(null); render(); if(!$("pfBar").querySelector("#pf-name,.danger + .btn"))renderPf();
   });
-  db.doc("config/main").onSnapshot(snap=>{const v=snap.exists?snap.data():null;if(v)cfg={...structuredClone(DEFAULTS),...v,fx:{...DEFAULTS.fx,...(v.fx||{})},rho:{...DEFAULTS.rho,...(v.rho||{})},limits:{...DEFAULTS.limits,...(v.limits||{})}};render();});
+  db.doc("config/main").onSnapshot(snap=>{const v=snap.exists?snap.data():null;if(!v)cfg=structuredClone(DEFAULTS);else cfg={...structuredClone(DEFAULTS),...v,fx:{...DEFAULTS.fx,...(v.fx||{})},rho:{...DEFAULTS.rho,...(v.rho||{})},limits:{...DEFAULTS.limits,...(v.limits||{})}};render();});
   try{ const inf=await window.api.appInfo(); const f=document.createElement("p"); f.className="note"; f.textContent="Albatros Allocation para Mac · interfaz v"+inf.version+" ("+inf.source+")"+(inf.needsReinstall?" · Hay una versión nueva de la app que requiere reinstalar: pedísela a Claude.":""); document.querySelector(".wrap").append(f); if(inf.source==="actualizada desde GitHub") toast("Albatros Allocation se actualizó: "+(inf.notes||"versión "+inf.version)); }catch(e){}
   setTimeout(()=>{ holdings.filter(h=>h.classifyPending).forEach(h=>classify(h,h.manualFields||[])); refreshAll(true); },60);
 })();
