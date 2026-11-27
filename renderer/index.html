@@ -265,21 +265,29 @@ function slug(t){return String(t||"").trim().toUpperCase().replace(/[^A-Z0-9_\-~
 
 /* ---------- bonds (IBKR symbology) ---------- */
 const SOVEREIGN={URUGUA:["Uruguay","Bonos emergentes"],BRAZIL:["Latinoamérica","Bonos emergentes"],MEX:["Latinoamérica","Bonos emergentes"],MEXCAT:["Latinoamérica","Bonos emergentes"],COLOM:["Latinoamérica","Bonos emergentes"],CHILE:["Latinoamérica","Bonos emergentes"],PERU:["Latinoamérica","Bonos emergentes"],PANAMA:["Latinoamérica","Bonos emergentes"],PARGUY:["Latinoamérica","Bonos emergentes"],ARGENT:["Latinoamérica","Bonos emergentes"],ECUA:["Latinoamérica","Bonos emergentes"],INDON:["Emergentes","Bonos emergentes"],TURKEY:["Emergentes","Bonos emergentes"]};
+const MONTHS_EN={JAN:1,FEB:2,MAR:3,APR:4,MAY:5,JUN:6,JUL:7,AUG:8,SEP:9,OCT:10,NOV:11,DEC:12,ENE:1,ABR:4,AGO:8,SET:9,DIC:12};
+const FRAC={"½":0.5,"¼":0.25,"¾":0.75,"⅛":0.125,"⅜":0.375,"⅝":0.625,"⅞":0.875};
 function parseBond(raw){
-  const t=String(raw||"").trim().toUpperCase().replace(/\s+/g," ");
-  const m=t.match(/^([A-Z0-9.\-]{1,12}) (\d+(?:\.\d+)?)(?: (\d+)\/(\d+))? (\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  let t=String(raw||"").trim().toUpperCase().replace(/\s+/g," ");
+  t=t.replace(/\s+(CORP|GOVT|SOVR|USD|BOND|NOTE|NOTES|BD|N)$/,"").replace(/(\d)\s*([½¼¾⅛⅜⅝⅞])/g,(m,d,f)=>d+" "+f);
+  const m=t.match(/^(.+?) (\d+(?:[.,]\d+)?)(?: (\d+)\/(\d+)| ([½¼¾⅛⅜⅝⅞]))? (?:(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})|(\d{1,2})([A-Z]{3})(\d{2}|\d{4}))$/);
   if(m){
-    const issuer=m[1]; const coupon=Number(m[2])+(m[3]?Number(m[3])/Number(m[4]):0);
-    let y=Number(m[7]); if(y<100) y+=2000;
-    const maturity=`${y}-${String(m[5]).padStart(2,"0")}-${String(m[6]).padStart(2,"0")}`;
+    const issuer=m[1].trim(); let coupon=Number(m[2].replace(",","."));
+    if(m[3])coupon+=Number(m[3])/Number(m[4]); if(m[5])coupon+=FRAC[m[5]]||0;
+    let mo,da,y;
+    if(m[6]){mo=Number(m[6]);da=Number(m[7]);y=Number(m[8]);} else {da=Number(m[9]);mo=MONTHS_EN[m[10]]||0;y=Number(m[11]);}
+    if(!(mo>=1&&mo<=12)||!(da>=1&&da<=31)||!(coupon>=0&&coupon<30)) return null;
+    if(y<100) y+=2000;
+    const maturity=`${y}-${String(mo).padStart(2,"0")}-${String(da).padStart(2,"0")}`;
     const years=Math.max(0,(new Date(maturity)-new Date())/31557600000);
-    const tsy=["T","B","TII","US-T"].includes(issuer); const sov=SOVEREIGN[issuer];
+    const key=issuer.replace(/\s+/g," ");
+    const tsy=["T","B","TII","US-T","UST"].includes(key)||/UNITED STATES|US TREAS|TREASURY/.test(key); const sov=SOVEREIGN[key]||(/URUGUAY/.test(key)?SOVEREIGN.URUGUA:null);
     const sector=tsy?(years<=1?"Letras / monetario":"Bonos del Tesoro"):sov?sov[1]:"Bonos corporativos";
     const region=tsy?"EE.UU.":sov?sov[0]:"EE.UU.";
     const base=Math.min(0.15,0.01+0.0075*Math.min(years,30));
     const vol=+(base+(tsy?0:sov?0.03:0.015)).toFixed(3);
     const beta=tsy?0.05:sov?0.3:0.15;
-    return {kind:"ibkr",issuer,coupon,maturity,years,sector,region,vol,beta,treasury:tsy,sovereign:!!sov};
+    return {kind:"ibkr",issuer:tsy&&key.length>4?"T":key,coupon,maturity,years,sector,region,vol,beta,treasury:tsy,sovereign:!!sov};
   }
   if(/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(t)) return {kind:"isin"};
   if(/^\d{3}[A-Z0-9]{5}\d$/.test(t)) return {kind:"cusip"};
@@ -291,14 +299,18 @@ const BOND_ISSUERS={T:"Tesoro EE.UU.",B:"Letra del Tesoro EE.UU.",TII:"TIPS EE.U
 const MES=["ene","feb","mar","abr","may","jun","jul","ago","set","oct","nov","dic"];
 function couponTxt(c){return fmt(Number(c),3).replace(/,?0+$/,"");}
 function bondName(issuerName,coupon,maturity){const [y,m]=String(maturity||"").split("-");return issuerName+" "+couponTxt(coupon)+" % "+(m?MES[Number(m)-1]+"-":"")+(y||"");}
-function lbl(h){return h&&h.vehicle==="Bono"?(h.name||h.ticker):(h?h.ticker:"");}
+function bondLabel(h){if(h.name&&h.name.toUpperCase()!==String(h.ticker||"").toUpperCase())return h.name;const b=parseBond(h.ticker);const iss=h.issuer||(b&&b.issuer);const cp=Number.isFinite(Number(h.coupon))?Number(h.coupon):(b&&b.coupon);const mt=h.maturity||(b&&b.maturity);return iss&&mt?bondName(BOND_ISSUERS[iss]||iss,cp,mt):(h.name||h.ticker);}
+function lbl(h){if(!h)return "";return (h.vehicle==="Bono"||(h.assetClass==="rf"&&parseBond(h.ticker)))?bondLabel(h):h.ticker;}
 function lblShort(h){const t=lbl(h);return t.length>16?t.slice(0,15)+"…":t;}
 /* ---------- valuation ---------- */
 function fxOf(cur){const f=(cfg.fx||{})[cur];return (Number(f)>0)?Number(f):(cur==="USD"?1:NaN);}
 function localValue(h){ if(h.mode==="amount") return Number(h.amount)||0; return (Number(h.qty)||0)*(Number(h.price)||0)/(Number(h.pricePer)||1); }
 function usdValue(h){ const cur=(h.mode==="amount"&&h.amountCurrency)?h.amountCurrency:(h.currency||"USD"); const f=fxOf(cur); return localValue(h)/f; }
+function cashRows(){return holdings.filter(h=>h.assetClass==="cash").map(h=>({...h,value:usdValue(h)})).filter(h=>Number.isFinite(h.value));}
+function cashTotal(){return cashRows().reduce((s,h)=>s+Math.max(h.value,0),0);}
 function rows(){
-  const list=holdings.map(h=>({...h, value:usdValue(h)})).filter(h=>Number.isFinite(h.value));
+  /* El efectivo se muestra en la cartera pero no entra en ningún análisis: pesos, riesgo, Markowitz ni performance. */
+  const list=holdings.filter(h=>h.assetClass!=="cash").map(h=>({...h, value:usdValue(h)})).filter(h=>Number.isFinite(h.value));
   const total=list.reduce((s,h)=>s+Math.max(h.value,0),0);
   list.forEach(h=>h.w= total>0? h.value/total:0);
   list.sort((a,b)=>b.value-a.value);
@@ -342,7 +354,8 @@ function render(){
   const ex=holdings.some(h=>h.example);
   $("exampleBanner").hidden=!ex;
   $("exampleActions").hidden=!canWrite;
-  $("subtitle").textContent = list.length? ("Valor total "+usd(total)+" · "+list.length+" posiciones · valores en US$") : "Cartera en US$ · diagnóstico, riesgo y rebalanceo";
+  const ct=cashTotal();
+  $("subtitle").textContent = (list.length||ct)? ("Valor total "+usd(total+ct)+" · invertido "+usd(total)+(ct?" · efectivo "+usd(ct):"")+" · "+list.length+" posiciones") : "Cartera en US$ · diagnóstico, riesgo y rebalanceo";
   renderCartera(list,total);
   renderDiag(list,total,R);
   renderRiesgo(list,total,R);
@@ -356,7 +369,7 @@ function renderKpis(list,total,R){
   const classes=group(list,h=>h.assetClass);
   const rvW=(classes.find(c=>c[0]==="rv")||[0,0])[1];
   const items=[
-    ["Valor total", list.length?usd(total):"—", list.length?"tipo de cambio editable en Riesgo":"sin posiciones"],
+    ["Valor invertido", list.length?usd(total):"—", cashTotal()>0?"+ "+usd(cashTotal())+" en efectivo":(list.length?"sin efectivo cargado":"sin posiciones")],
     ["Renta variable", list.length?pct(rvW,0):"—", "del total"],
     ["Mayor posición", top?lblShort(top):"—", top?pct(top.w,1):""],
     ["N efectivo", list.length?fmt(R.effN,1):"—", "posiciones equivalentes"],
@@ -369,18 +382,20 @@ function emptyState(container){
   const p=el("div",{class:"panel empty"});
   p.append(el("h2",{},"Todavía no hay activos en la cartera"));
   p.append(el("p",{},"Agregá tu primera posición con el ticker y la cantidad comprada. La app completa el resto y la valoriza con el último precio."));
-  if(canWrite){const b=el("button",{class:"btn primary"},"Agregar activo");b.onclick=()=>openSheet(null);p.append(b);}
+  if(canWrite){const a=el("div",{class:"actions",style:"justify-content:center"});const b=el("button",{class:"btn primary"},"Agregar activo");b.onclick=()=>openSheet(null);const c=el("button",{class:"btn"},"Agregar efectivo");c.onclick=()=>openSheet(null,"cash");a.append(b,c);p.append(a);}
   container.append(p);
 }
 function classChip(c){const s=el("span",{class:"chip"});const d=el("span",{class:"dot"});d.style.background=clsColor(c);s.append(d,document.createTextNode((CLASSES[c]||CLASSES.otros).label));return s;}
 
 function renderCartera(list,total){
   const v=$("v-cartera"); v.innerHTML="";
-  if(!list.length){ if(loaded) emptyState(v); return; }
+  const cr=cashRows();
+  if(!list.length&&!cr.length){ if(loaded) emptyState(v); if(loaded&&STORE&&STORE.backup&&canWrite)v.append(restoreBox()); return; }
+  if(!list.length){ v.append(cashPanel(cr)); v.append(resetBox()); return; }
   const p=el("div",{class:"panel"});
   const head=el("div",{style:"display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap"});
   head.append(el("h2",{style:"margin:0"},"Posiciones"));
-  if(canWrite){const b=el("button",{class:"btn small"},"Agregar activo");b.onclick=()=>openSheet(null);head.append(b);}
+  if(canWrite){const bx=el("div",{class:"actions"});const b=el("button",{class:"btn small"},"Agregar activo");b.onclick=()=>openSheet(null);const c=el("button",{class:"btn small"},"Agregar efectivo");c.onclick=()=>openSheet(null,"cash");bx.append(b,c);head.append(bx);}
   p.append(head);
   const sc=el("div",{class:"scroll"}); const t=el("table",{class:"pos-table"});
   const hasCost=list.some(h=>Number(h.cost)>0);
@@ -389,7 +404,7 @@ function renderCartera(list,total){
   const tb=el("tbody");
   list.forEach(h=>{
     const tr=el("tr");
-    const a=el("td");const tk=el("div");const isBond=h.vehicle==="Bono";tk.append(el("span",{class:isBond?"tk bondname":"tk"},lbl(h)));if(h.example)tk.append(el("span",{class:"ex"},"ejemplo"));a.append(tk,el("div",{class:"nm"},classifying.has(h.id)?"Completando datos…":(isBond?h.ticker:(h.name||""))));if(h.vehicle==="Bono"&&h.maturity)a.append(el("div",{class:"src"},(Number.isFinite(Number(h.coupon))?"Cupón "+fmt(Number(h.coupon),3).replace(/,?0+$/,"")+" % · ":"")+"vence "+isoToEs(h.maturity)));tr.append(a);
+    const a=el("td");const tk=el("div");const isBond=h.vehicle==="Bono";tk.append(el("span",{class:isBond?"tk bondname":"tk"},lbl(h)));if(h.example)tk.append(el("span",{class:"ex"},"ejemplo"));a.append(tk,el("div",{class:"nm"},classifying.has(h.id)?"Completando datos…":(isBond?h.ticker:(h.name||""))));if(h.buyDate)a.append(el("div",{class:"src"},"Comprada el "+isoToEs(h.buyDate)));if(h.vehicle==="Bono"&&h.maturity)a.append(el("div",{class:"src"},(Number.isFinite(Number(h.coupon))?"Cupón "+fmt(Number(h.coupon),3).replace(/,?0+$/,"")+" % · ":"")+"vence "+isoToEs(h.maturity)));tr.append(a);
     const c=el("td");c.append(classChip(h.assetClass));const vv=el("div",{class:"src"},[h.vehicle,h.sector].filter(Boolean).join(" · "));c.append(vv);tr.append(c);
     const rg=el("td");rg.append(document.createTextNode(h.region||"—"),el("div",{class:"src"},h.currency||"USD"));tr.append(rg);
     const isAmt=h.mode==="amount";
@@ -414,6 +429,36 @@ function renderCartera(list,total){
   notes.push("Los precios se actualizan al abrir la app y con «Actualizar precios». Valores en otras monedas se convierten con el tipo de cambio de la pestaña Riesgo, que también se actualiza solo.");
   notes.forEach(n=>p.append(el("p",{class:"note"},n)));
   v.append(p);
+  if(cr.length){const cp=cashPanel(cr);cp.style.marginTop="16px";v.append(cp);}
+  v.append(resetBox());
+}
+function cashPanel(cr){
+  const p=el("div",{class:"panel"});
+  const head=el("div",{style:"display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap"});
+  head.append(el("h2",{style:"margin:0"},"Efectivo"));
+  if(canWrite){const b=el("button",{class:"btn small"},"Agregar efectivo");b.onclick=()=>openSheet(null,"cash");head.append(b);}
+  p.append(head);
+  p.append(el("p",{class:"small muted",style:"margin:0 0 10px"},"Figura en la cartera pero no entra en los análisis (pesos, riesgo, Markowitz, performance ni rebalanceo)."));
+  const t=el("table",{class:"pos-table"});const hr=el("tr");[["Moneda"],["Monto","n"],["En US$","n"],[""]].forEach(([h,c])=>hr.append(el("th",c?{class:c}:{},h)));t.append(hr);
+  cr.forEach(h=>{const tr=el("tr");const cur=h.amountCurrency||h.currency||"USD";tr.append(el("td",{},(h.name||"Efectivo")+" ("+cur+")"),el("td",{class:"n"},fmt(Number(h.amount),2)+" "+cur),el("td",{class:"n"},fmt(h.value,0)));const ac=el("td");if(canWrite){const e=el("button",{class:"btn small"},"Editar");e.onclick=()=>openSheet(h);ac.append(e);}tr.append(ac);t.append(tr);});
+  const tot=el("tr");tot.style.fontWeight="600";tot.append(el("td",{},"Total"),el("td"),el("td",{class:"n"},fmt(cashTotal(),0)),el("td"));t.append(tot);
+  const sc=el("div",{class:"scroll"});sc.append(t);p.append(sc);return p;
+}
+function resetBox(){
+  const box=el("div",{class:"actions",style:"margin-top:16px;justify-content:flex-end"});
+  if(!canWrite)return box;
+  const b=el("button",{class:"btn small danger"},"Restablecer cartera");
+  b.onclick=()=>{box.innerHTML="";box.append(el("span",{class:"small",style:"align-self:center"},"Se borran todas las posiciones y el efectivo. Los supuestos, el perfil y los rangos se mantienen. Vas a poder recuperarla desde acá mientras no cargues una nueva."));
+    const y=el("button",{class:"btn small danger"},"Sí, vaciar la cartera");const n=el("button",{class:"btn small"},"Cancelar");n.onclick=()=>render();
+    y.onclick=()=>{STORE.backup={holdings:JSON.parse(JSON.stringify(STORE.holdings)),date:new Date().toLocaleString("es-UY")};STORE.holdings={};persist();emitH();toast("Cartera restablecida");};
+    box.append(y,n);};
+  box.append(b);return box;
+}
+function restoreBox(){
+  const box=el("div",{class:"status",style:"margin-top:12px"});
+  box.append(document.createTextNode("Hay una cartera borrada el "+STORE.backup.date+" ("+Object.keys(STORE.backup.holdings||{}).length+" posiciones). "));
+  const b=el("button",{class:"btn small"},"Recuperarla");b.onclick=()=>{STORE.holdings=STORE.backup.holdings||{};delete STORE.backup;persist();emitH();toast("Cartera recuperada");refreshAll(true);};
+  box.append(b);return box;
 }
 
 function donut(parts){
@@ -533,7 +578,7 @@ function renderRiesgo(list,total,R){
   p4.append(fxf);
   p4.append(el("h3",{style:"margin-top:18px"},"Límites de concentración (%)"));
   const lf=el("div",{class:"row-fields"});
-  [["position","Posición individual"],["sector","Sector"],["cripto","Cripto"],["cash","Efectivo"],["region","Una sola región"]].forEach(([k,l])=>lf.append(numField("cfg-lim-"+k,l,fmt1(cfg.limits[k]*100),"",x=>saveCfg({limits:{...cfg.limits,[k]:x/100}}),"1")));
+  [["position","Posición individual"],["sector","Sector"],["cripto","Cripto"],["region","Una sola región"]].forEach(([k,l])=>lf.append(numField("cfg-lim-"+k,l,fmt1(cfg.limits[k]*100),"",x=>saveCfg({limits:{...cfg.limits,[k]:x/100}}),"1")));
   p4.append(lf);
   if(!canWrite)p4.append(el("p",{class:"note"},"Solo quien puede editar la cartera cambia los supuestos."));
   st.append(p4);
@@ -617,13 +662,14 @@ function pnl(h){
   const per=Number(h.pricePer)||1, fx=fxOf(h.currency||"USD");
   const usd=q*(p-c)/per/fx; return {usd,pct:p/c-1,costUsd:q*c/per/fx};
 }
-function openSheet(h){
+function openSheet(h,mode){
   const root=$("sheetRoot");root.innerHTML="";
-  const isNew=!h; const d=h?stripCalc(h):{ticker:"",name:"",vehicle:"Acción",assetClass:"rv",sector:"",region:"EE.UU.",currency:"USD",mode:"qty",qty:"",price:"",cost:"",target:null,vol:"",beta:"",note:""};
+  const cashMode=mode==="cash"||(h&&h.assetClass==="cash");
+  const isNew=!h; const d=h?stripCalc(h):cashMode?{ticker:"USD",name:"",vehicle:"Efectivo",assetClass:"cash",sector:"Efectivo",region:"EE.UU.",currency:"USD",mode:"amount",amount:"",target:null,note:""}:{ticker:"",name:"",vehicle:"Acción",assetClass:"rv",sector:"",region:"EE.UU.",currency:"USD",mode:"qty",qty:"",price:"",cost:"",target:null,vol:"",beta:"",note:""};
   const touched=new Set();
   const shade=el("div",{class:"shade"});shade.onclick=close;
   const s=el("div",{class:"sheet",role:"dialog","aria-modal":"true","aria-labelledby":"sh-title"});
-  const hd=el("header");hd.append(el("h2",{id:"sh-title",style:"margin:0"},isNew?"Agregar activo":"Editar "+lbl(d)));const x=el("button",{class:"btn small","aria-label":"Cerrar"},"Cerrar");x.onclick=close;hd.append(x);
+  const hd=el("header");hd.append(el("h2",{id:"sh-title",style:"margin:0"},isNew?(cashMode?"Agregar efectivo":"Agregar activo"):"Editar "+(cashMode?"efectivo "+(d.amountCurrency||d.ticker):lbl(d))));const x=el("button",{class:"btn small","aria-label":"Cerrar"},"Cerrar");x.onclick=close;hd.append(x);
   const body=el("div",{class:"body"});
   const fld=(id,label,input,hint)=>{const f=el("div",{class:"field"});const lb=el("label",{for:id},label);f.append(lb,input);if(hint)f.append(el("span",{class:"hint"},hint));f._label=lb;return f;};
   const inp=(id,val,attrs={})=>{const i=el("input",{id,class:"inp"+(attrs.n?" n":""),value:val==null?"":String(val),...(attrs.type?{type:attrs.type}:{}),...(attrs.step?{step:attrs.step}:{}),...(attrs.list?{list:attrs.list}:{}),...(attrs.ph?{placeholder:attrs.ph}:{}),...(attrs.mode?{inputmode:attrs.mode}:{}),autocomplete:"off"});i.addEventListener("input",()=>touched.add(id));return i;};
@@ -631,12 +677,12 @@ function openSheet(h){
   const isCashT=t=>CURRENCIES.includes(String(t||"").trim().toUpperCase());
   /* principal: ticker + cantidad */
   const main=el("div",{class:"grid-f"});
-  const fT=inp("f-ticker",d.ticker,{ph:"NVDA, SPY, BTC, USD, T 4 1/2 11/15/33…"});fT.style.textTransform="uppercase";
+  const fT=cashMode?sel("f-ticker",CURRENCIES.map(c=>[c,c]),String(d.amountCurrency||d.ticker||"USD").toUpperCase()):inp("f-ticker",d.ticker,{ph:"NVDA, SPY, BTC, T 4 1/2 11/15/33…"});if(!cashMode)fT.style.textTransform="uppercase";
   if(!isNew)fT.disabled=true;
   const qtyVal=d.mode==="amount"?d.amount:d.qty;
   const fQty=inp("f-qty",qtyVal==null?"":qtyVal,{n:1,mode:"decimal",ph:"10"});
   const tHint=el("span",{class:"hint"},"Bonos: como los muestra IBKR (emisor cupón vencimiento) o ISIN");
-  const tf=fld("f-ticker","Ticker",fT);tf.append(tHint);
+  const tf=fld("f-ticker",cashMode?"Moneda":"Ticker",fT);tf.append(tHint);
   const qf=fld("f-qty","Cantidad de acciones",fQty,"");
   main.append(tf,qf);
   const second=el("div",{class:"grid-f"});
@@ -644,26 +690,32 @@ function openSheet(h){
   const fBpx=inp("f-bpx",d.pricePer&&d.price?d.price:"",{n:1,mode:"decimal",ph:"98,50"});
   const cf=fld("f-cost","Precio de compra (opcional)",fCost,"Para ver la ganancia o pérdida");
   const bf=fld("f-bpx","Precio actual (% del nominal)",fBpx,"Yahoo no publica precios de bonos");
-  second.append(cf,bf);
+  const fBuy=inp("f-buy",d.buyDate||"",{type:"date"});fBuy.max=new Date().toISOString().slice(0,10);
+  const buyf=fld("f-buy","Fecha de compra (opcional)",fBuy,"Se muestra en Cartera y en Performance");
+  const fBName=inp("f-bname",d.vehicle==="Bono"?bondLabel(d):"",{ph:"Ej.: Uruguay 4,375 % ene-2031"});
+  const bnf=fld("f-bname","Nombre del bono",fBName,"Se completa solo; podés cambiarlo");
+  second.append(cf,bf,buyf,bnf);
   body.append(main,second);
   function kind(){const t=fT.value.trim().toUpperCase();const b=parseBond(t);return isCashT(t)||d.assetClass==="cash"?"cash":(b||d.vehicle==="Bono")?"bond":"stock";}
   function sync(){
     const k=kind(); const b=parseBond(fT.value);
     qf._label.textContent=k==="cash"?"Monto":k==="bond"?"Valor nominal":"Cantidad de acciones / unidades";
-    qf.querySelector(".hint").textContent=k==="cash"?"En la moneda del ticker (USD, UYU…)":k==="bond"?"Ej.: 10000 = US$ 10.000 nominales":"Las que compraste; el valor se calcula con el último precio";
-    cf.hidden=k==="cash"; cf._label.textContent=k==="bond"?"Precio de compra (% del nominal, opcional)":"Precio de compra por acción (opcional)";
+    qf.querySelector(".hint").textContent=k==="cash"?"En la moneda elegida":k==="bond"?"Ej.: 10000 = US$ 10.000 nominales":"Las que compraste; el valor se calcula con el último precio";
+    cf.hidden=k==="cash"; buyf.hidden=k==="cash"; bnf.hidden=k!=="bond";
+    if(k==="bond"&&!touched.has("f-bname")&&isNew&&b&&b.kind==="ibkr")fBName.value=bondName(BOND_ISSUERS[b.issuer]||b.issuer,b.coupon,b.maturity);
+    cf._label.textContent=k==="bond"?"Precio de compra (% del nominal, opcional)":"Precio de compra por acción (opcional)";
     bf.hidden=k!=="bond";
-    tHint.textContent=b&&b.kind==="ibkr"?"Bono: "+bondName(BOND_ISSUERS[b.issuer]||b.issuer,b.coupon,b.maturity)+" · "+b.sector:b?"Código "+b.kind.toUpperCase()+": se buscará el bono":k==="cash"?"Efectivo":"Bonos: como los muestra IBKR (emisor cupón vencimiento) o ISIN";
+    tHint.textContent=b&&b.kind==="ibkr"?"Bono: "+bondName(BOND_ISSUERS[b.issuer]||b.issuer,b.coupon,b.maturity)+" · "+b.sector:b?"Código "+b.kind.toUpperCase()+": se buscará el bono":k==="cash"?"":"Bonos: como los muestra IBKR (emisor cupón vencimiento) o ISIN";
   }
   qf.append(el("span",{class:"hint"},""));
-  fT.addEventListener("input",sync);
+  fT.addEventListener("input",sync);fT.addEventListener("change",sync);
   const info=el("p",{class:"small muted"});
-  info.textContent=isNew?"Al agregar, la app busca el activo en Yahoo Finance (nombre, clase, sector, moneda), toma el último precio y calcula el valor de tu posición. Volatilidad y beta salen de su historia de precios.":(d.priceDate?"Último precio: "+fmt(Number(d.price),d.pricePer?3:2)+(d.pricePer?" %":" "+(d.currency||"USD"))+" ("+d.priceDate+(d.priceSource?", "+d.priceSource:"")+").":"Precio pendiente.");
+  info.textContent=cashMode?"El efectivo figura en la cartera, pero no cambia ningún análisis: pesos, riesgo, Markowitz, performance y rebalanceo se calculan solo sobre lo invertido.":isNew?"Al agregar, la app busca el activo en Yahoo Finance (nombre, clase, sector, moneda), toma el último precio y calcula el valor de tu posición. Volatilidad y beta salen de su historia de precios.":(d.priceDate?"Último precio: "+fmt(Number(d.price),d.pricePer?3:2)+(d.pricePer?" %":" "+(d.currency||"USD"))+" ("+d.priceDate+(d.priceSource?", "+d.priceSource:"")+").":"Precio pendiente.");
   body.append(info);
   const fTgt=inp("f-tgt",Number.isFinite(d.target)?fmt1(d.target*100):"",{type:"number",step:"0.5",n:1,ph:"sin objetivo"});
-  body.append(fld("f-tgt","Peso objetivo (%)",fTgt,"Opcional, para rebalancear"));
+  const tgf=fld("f-tgt","Peso objetivo (%)",fTgt,"Opcional, para rebalancear");if(!cashMode)body.append(tgf);
   /* detalles */
-  const det=el("details");det.append(el("summary",{class:"small",style:"cursor:pointer;color:var(--muted)"},"Ajustar datos a mano"));
+  const det=el("details");if(cashMode)det.hidden=true;det.append(el("summary",{class:"small",style:"cursor:pointer;color:var(--muted)"},"Ajustar datos a mano"));
   const g1=el("div",{class:"grid-f",style:"margin-top:12px"});
   const fName=inp("f-name",d.name);
   const fVeh=sel("f-veh",VEHICLES.map(v=>[v,v]),d.vehicle);
@@ -678,6 +730,7 @@ function openSheet(h){
   g1.append(fld("f-name","Nombre",fName),fld("f-veh","Vehículo",fVeh),fld("f-cls","Clase de activo",fCls),fld("f-sec","Sector",fSec),fld("f-reg","Región",fReg),fld("f-cur","Moneda de cotización",fCur),fld("f-vol","Volatilidad anual (%)",fVol),fld("f-beta","Beta vs S&P 500",fBeta),fld("f-px","Precio fijo (en vez de Yahoo)",fPx,"Dejalo vacío para usar el último precio"));
   const fNote=el("textarea",{id:"f-note",class:"inp",rows:"2"});fNote.value=d.note||"";
   det.append(g1,dl,el("div",{style:"margin-top:12px"}));det.lastChild.append(fld("f-note","Nota",fNote));
+  if(cashMode){const fNote2=fNote;const nf=fld("f-note","Nota (opcional)",fNote2,"Ej.: cuenta en IBKR, caja de ahorro");body.append(nf);}
   body.append(det);
   const err=el("p",{class:"small neg",role:"alert"});body.append(err);
   const ft=el("footer");const left=el("div",{class:"confirm"});const right=el("div",{class:"actions"});
@@ -696,17 +749,21 @@ function openSheet(h){
     const tg=numF(fTgt.value), cost=numIn(fCost.value), bpx=numIn(fBpx.value);
     const o={...d,ticker:tk,name:fName.value.trim(),vehicle:fVeh.value,assetClass:fCls.value,sector:fSec.value.trim(),region:fReg.value,currency:(fCur.value.trim().toUpperCase()||"USD").slice(0,4),
       vol:numF(fVol.value)!==null?numF(fVol.value)/100:null,beta:numF(fBeta.value),target:tg!==null?clamp(tg,0,100)/100:null,note:fNote.value.trim(),cost:cost!==null&&cost>0?cost:null};
-    if(k==="cash"){ o.mode="amount"; o.amount=q; o.qty=null; o.amountCurrency=isCashT(tk)?tk:(o.amountCurrency||o.currency||"USD"); o.pricePending=false; }
+    if(k==="cash"){ o.mode="amount"; o.amount=q; o.qty=null; o.amountCurrency=isCashT(tk)?tk:(o.amountCurrency||o.currency||"USD"); o.pricePending=false;
+      Object.assign(o,{assetClass:"cash",vehicle:"Efectivo",sector:"Efectivo",currency:o.amountCurrency,name:o.name||"Efectivo en "+o.amountCurrency,vol:0,beta:0,target:null,cost:null,buyDate:null,region:o.amountCurrency==="UYU"?"Uruguay":(o.region||"EE.UU.")}); }
     else { o.mode="qty"; o.qty=q; if(!(Number(o.price)>0)) o.pricePending=true; }
-    const manual=[...touched].filter(x=>!["f-ticker","f-qty","f-tgt","f-note","f-px","f-cost","f-bpx"].includes(x));
+    if(k!=="cash")o.buyDate=fBuy.value||null;
+    const manual=[...touched].filter(x=>!["f-ticker","f-qty","f-tgt","f-note","f-px","f-cost","f-bpx","f-buy","f-bname"].includes(x));
     const bd=isNew?parseBond(tk):null;
     if(bd&&bd.kind==="ibkr"){Object.assign(o,{vehicle:"Bono",assetClass:"rf",sector:bd.sector,region:bd.region,currency:"USD",issuer:bd.issuer,coupon:bd.coupon,maturity:bd.maturity,pricePer:100,vol:o.vol??bd.vol,beta:o.beta??bd.beta,name:o.name||bondName(BOND_ISSUERS[bd.issuer]||bd.issuer,bd.coupon,bd.maturity)});}
     else if(bd){Object.assign(o,{vehicle:"Bono",assetClass:"rf",pricePer:100});}
+    if((k==="bond"||o.vehicle==="Bono")&&fBName.value.trim())o.name=fBName.value.trim();
     if(k==="bond"&&bpx!==null&&bpx>0){o.price=bpx;o.pricePer=100;o.priceDate=new Date().toLocaleDateString("es-UY");o.priceSource="manual";o.priceManual=true;o.pricePending=false;}
     const pxIn=numF(fPx.value);
     if(k==="stock"&&pxIn!==null&&pxIn>0){o.price=pxIn;o.priceDate=new Date().toLocaleDateString("es-UY");o.priceSource="manual";o.priceManual=true;o.pricePending=false;}
     else if(k==="stock"&&!isNew&&fPx.value.trim()===""&&d.priceManual&&touched.has("f-px")){o.priceManual=false;}
-    if(isNew){o.id=slug(tk);if(holdings.some(x=>x.id===o.id)){err.textContent=tk+" ya está en la cartera: editalo desde la tabla.";return;}o.riskSource=manual.length?"manual":"pendiente";o.classifyPending=!manual.length;o.manualFields=manual;}
+    if(isNew&&STORE&&STORE.backup){delete STORE.backup;}
+    if(isNew){o.id=slug(tk);if(holdings.some(x=>x.id===o.id)){err.textContent=k==="cash"?"Ya tenés efectivo en "+tk+": editalo desde la tabla de efectivo.":tk+" ya está en la cartera: editalo desde la tabla.";return;}if(k==="cash"){o.classifyPending=false;o.riskSource="efectivo";o.manualFields=[];}if(k!=="cash"){o.riskSource=manual.length?"manual":"pendiente";o.classifyPending=!manual.length;o.manualFields=manual;}}
     delete o.example;
     save.disabled=true;
     const ok=await saveHolding(o);save.disabled=false;
@@ -1084,10 +1141,10 @@ function renderPerf(list,total){
   // P&L by cost
   const withCost=list.filter(h=>pnl(h));
   if(withCost.length){
-    const pp=panel("Resultado según tu precio de compra");const t=el("table");const hr=el("tr");["Activo","Invertido US$","Valor US$","Resultado US$","Rentabilidad"].forEach((x,i)=>hr.append(el("th",i?{class:"n"}:{},x)));t.append(hr);
-    let inv=0,val=0;withCost.forEach(h=>{const pl=pnl(h);inv+=pl.costUsd;val+=h.value;const tr=el("tr");tr.append(el("td",{class:"tk"},lblShort(h)),el("td",{class:"n"},fmt(pl.costUsd,0)),el("td",{class:"n"},fmt(h.value,0)),el("td",{class:"n "+(pl.usd>=0?"pos":"neg")},(pl.usd>=0?"+":"−")+fmt(Math.abs(pl.usd),0)),el("td",{class:"n "+(pl.pct>=0?"pos":"neg")},pctS(pl.pct,1)));t.append(tr);});
-    const tr=el("tr");tr.style.fontWeight="600";tr.append(el("td",{},"Total"),el("td",{class:"n"},fmt(inv,0)),el("td",{class:"n"},fmt(val,0)),el("td",{class:"n "+(val-inv>=0?"pos":"neg")},(val-inv>=0?"+":"−")+fmt(Math.abs(val-inv),0)),el("td",{class:"n "+(val>=inv?"pos":"neg")},pctS(val/inv-1,1)));t.append(tr);
-    const sc=el("div",{class:"scroll"});sc.append(t);pp.append(sc);pp.append(el("p",{class:"note"},"Solo las posiciones con precio de compra cargado (Editar → Precio de compra)."));v.append(pp);
+    const pp=panel("Resultado según tu precio de compra");const t=el("table");const hr=el("tr");["Activo","Compra","Invertido US$","Valor US$","Resultado US$","Rentabilidad"].forEach((x,i)=>hr.append(el("th",i?{class:"n"}:{},x)));t.append(hr);
+    let inv=0,val=0;withCost.forEach(h=>{const pl=pnl(h);inv+=pl.costUsd;val+=h.value;const tr=el("tr");const dd=h.buyDate?Math.round((Date.now()-new Date(h.buyDate+"T12:00:00"))/864e5):null;const fc=el("td",{class:"n"},h.buyDate?isoToEs(h.buyDate):"—");if(dd!=null&&dd>=0)fc.append(el("div",{class:"src"},fmt(dd,0)+" días"+(dd>=365?" · "+pctS(Math.pow(1+pl.pct,365/dd)-1,1)+" anual":"")));tr.append(el("td",{class:"tk"},lblShort(h)),fc,el("td",{class:"n"},fmt(pl.costUsd,0)),el("td",{class:"n"},fmt(h.value,0)),el("td",{class:"n "+(pl.usd>=0?"pos":"neg")},(pl.usd>=0?"+":"−")+fmt(Math.abs(pl.usd),0)),el("td",{class:"n "+(pl.pct>=0?"pos":"neg")},pctS(pl.pct,1)));t.append(tr);});
+    const tr=el("tr");tr.style.fontWeight="600";tr.append(el("td",{},"Total"),el("td"),el("td",{class:"n"},fmt(inv,0)),el("td",{class:"n"},fmt(val,0)),el("td",{class:"n "+(val-inv>=0?"pos":"neg")},(val-inv>=0?"+":"−")+fmt(Math.abs(val-inv),0)),el("td",{class:"n "+(val>=inv?"pos":"neg")},pctS(val/inv-1,1)));t.append(tr);
+    const sc=el("div",{class:"scroll"});sc.append(t);pp.append(sc);pp.append(el("p",{class:"note"},"Solo las posiciones con precio de compra cargado (Editar → Precio de compra). La rentabilidad anual se muestra a partir de un año de tenencia."));v.append(pp);
   }
   const A=histAssets(list);const cash=list.filter(h=>h.assetClass==="cash");
   if(!A.length||!BENCH){needHist(v,"La evaluación de performance necesita la historia de precios de tus activos y del benchmark. Se descarga al abrir la app o con «Actualizar precios».");return;}
@@ -1129,9 +1186,9 @@ const QUIZ=[
   {q:"Tu cartera cae 20 %. ¿Cómo reaccionás?",o:[["Vendo y evito inversiones que puedan caer así",1],["Mantengo, pero evito ese tipo de inversiones a futuro",2],["No hago ajustes",3],["Compro más",4]]}
 ];
 const PROFILES={
-  Conservador:{A:4,aae:{rv:[15,25,35],rf:[50,60,75],cash:[5,10,20],cripto:[0,0,2],otros:[0,5,10]}},
-  Moderado:{A:3,aae:{rv:[40,50,60],rf:[30,40,50],cash:[5,10,15],cripto:[0,0,5],otros:[0,0,5]}},
-  Agresivo:{A:2,aae:{rv:[65,75,90],rf:[5,15,25],cash:[0,5,10],cripto:[0,5,10],otros:[0,0,10]}}
+  Conservador:{A:4,aae:{rv:[20,30,40],rf:[55,65,80],cripto:[0,0,2],otros:[0,5,10]}},
+  Moderado:{A:3,aae:{rv:[45,55,65],rf:[30,45,55],cripto:[0,0,5],otros:[0,0,5]}},
+  Agresivo:{A:2,aae:{rv:[70,80,95],rf:[5,15,30],cripto:[0,5,10],otros:[0,0,10]}}
 };
 function profileOf(ans){const v=QUIZ.map((q,i)=>ans&&ans[i]!=null?q.o[ans[i]][1]:null);if(v.some(x=>x==null))return null;const sc=mean(v);return {score:sc,label:sc<2?"Conservador":sc<3?"Moderado":"Agresivo"};}
 function renderPerfil(list,total){
@@ -1146,15 +1203,16 @@ function renderPerfil(list,total){
   if(pr){const P=PROFILES[pr.label];const box=el("div",{class:"status",style:"margin-top:6px"});box.append(el("b",{},"Perfil "+pr.label),document.createTextNode(" (puntaje "+fmt(pr.score,2)+" de 4). Aversión al riesgo de referencia: A = "+P.A+"."));
     if(canWrite){const a1=el("div",{class:"actions"});const b1=el("button",{class:"btn small"},"Usar A = "+P.A+" en Markowitz");b1.onclick=()=>{saveCfg({A:P.A});};const b2=el("button",{class:"btn small"},"Cargar rangos del perfil "+pr.label);b2.onclick=()=>{saveCfg({aae:JSON.parse(JSON.stringify(P.aae)),aaeFrom:pr.label});};a1.append(b1,b2);box.append(a1);}pq.append(box);}
   else pq.append(el("p",{class:"small muted"},"Respondé todas las preguntas para ver el perfil."));
+  if(canWrite&&ans.some(a=>a!=null)){const rb=el("div",{class:"actions",style:"margin-top:8px"});const b=el("button",{class:"btn small"},"Restablecer respuestas");b.onclick=()=>{saveCfg({profile:null});toast("Respuestas del perfil borradas");};rb.append(b);pq.append(rb);}
   pq.append(el("p",{class:"note"},"Los perfiles son intuitivos y orientativos; el horizonte también importa: a más plazo, menor volatilidad de los retornos anualizados."));
   g.append(pq);
   // AAE
-  const pa=panel("Asset Allocation Estratégico","Se maneja con rangos, no con porcentajes estrictos: dentro del rango hay libertad para el asset allocation táctico.");
-  const aae=cfg.aae||PROFILES.Moderado.aae;
+  const pa=panel("Asset Allocation Estratégico","Se maneja con rangos, no con porcentajes estrictos: dentro del rango hay libertad para el asset allocation táctico. Los porcentajes son sobre lo invertido, sin contar el efectivo.");
+  const aae=(cfg.aae&&!(cfg.aae.cash&&cfg.aae.cash[1]>0))?cfg.aae:(PROFILES[cfg.aaeFrom]||PROFILES.Moderado).aae;
   const cls=group(list,h=>h.assetClass);const cur=k=>(cls.find(c=>c[0]===k)||[0,0])[1];
   const t=el("table");const hr=el("tr");["Clase","Mín.","Objetivo","Máx.","Actual","Estado"].forEach((x,i)=>hr.append(el("th",i?{class:"n"}:{},x)));t.append(hr);
   let sumT=0;const outC=[];
-  Object.keys(CLASSES).forEach(k=>{const r=aae[k]||[0,0,0];sumT+=r[1];const a=cur(k);const tr=el("tr");const c=el("td");c.append(classChip(k));tr.append(c);
+  Object.keys(CLASSES).filter(k=>k!=="cash").forEach(k=>{const r=aae[k]||[0,0,0];sumT+=r[1];const a=cur(k);const tr=el("tr");const c=el("td");c.append(classChip(k));tr.append(c);
     [0,1,2].forEach(j=>{const td=el("td",{class:"n"});if(canWrite){const i=el("input",{id:"aae-"+k+"-"+j,class:"inp n",style:"width:4.6em",type:"number",step:"1",min:"0",max:"100",value:String(r[j])});i.onchange=()=>{const nv=JSON.parse(JSON.stringify(aae));nv[k]=nv[k]||[0,0,0];nv[k][j]=clamp(parseFloat(i.value)||0,0,100);saveCfg({aae:nv});};td.append(i);}else td.textContent=r[j]+" %";tr.append(td);});
     tr.append(el("td",{class:"n",style:"font-weight:600"},pct(a,1)));
     const inR=a*100>=r[0]-1e-9&&a*100<=r[2]+1e-9;if(!inR)outC.push(CLASSES[k].label);
@@ -1164,7 +1222,7 @@ function renderPerfil(list,total){
   pa.append(el("p",{class:"small muted",style:"margin-top:10px"},outC.length?"Fuera de rango: "+outC.join(", ")+".":"Todas las clases están dentro de su rango."));
   if(canWrite&&list.length){const box=el("div",{class:"actions",style:"margin-top:8px"});const b=el("button",{class:"btn small"},"Llevar estos objetivos a Rebalanceo");
     b.onclick=()=>{box.innerHTML="";box.append(el("span",{class:"small",style:"align-self:center"},"Reemplaza los pesos objetivo de cada activo: el objetivo de la clase se reparte entre sus activos según su peso actual."));const y=el("button",{class:"btn small primary"},"Confirmar");const n=el("button",{class:"btn small"},"Cancelar");n.onclick=()=>renderPerfil(rows().list,0);
-      y.onclick=async()=>{y.disabled=true;let miss=[];for(const k of Object.keys(CLASSES)){const hs=list.filter(h=>h.assetClass===k);const T=(aae[k]||[0,0,0])[1]/100;if(!hs.length){if(T>0)miss.push(CLASSES[k].label);continue;}const sw=hs.reduce((s,h)=>s+h.w,0);for(const h of hs){const tg=sw>0?T*h.w/sw:T/hs.length;await saveHolding({...stripCalc(h),target:+tg.toFixed(4)},true);}}
+      y.onclick=async()=>{y.disabled=true;let miss=[];for(const k of Object.keys(CLASSES).filter(k=>k!=="cash")){const hs=list.filter(h=>h.assetClass===k);const T=(aae[k]||[0,0,0])[1]/100;if(!hs.length){if(T>0)miss.push(CLASSES[k].label);continue;}const sw=hs.reduce((s,h)=>s+h.w,0);for(const h of hs){const tg=sw>0?T*h.w/sw:T/hs.length;await saveHolding({...stripCalc(h),target:+tg.toFixed(4)},true);}}
         toast(miss.length?"Objetivos cargados. Sin activos en: "+miss.join(", "):"Objetivos cargados en Rebalanceo");};box.append(y,n);};box.append(b);pa.append(box);}
   g.append(pa);v.append(g);
   // estrategia de rebalanceo
